@@ -45,8 +45,10 @@ class SpotifyClient:
             f'{SPOTIFY_API_BASE_URL}/albums/{album_id}',
             headers=headers
         )
+        if response.status_code == 200:
+            return response.json()
         
-        if response.status_code != 200:
+        elif response.status_code != 200:
             raise Exception("Failed to get album information")
             
         return response.json()
@@ -107,6 +109,7 @@ def main():
                 
         except Exception as e:
             print(f"Failed to retrieve lyrics for {track_name}: {e}")
+    return ARTIST_NAME, track_names
 
 if __name__ == "__main__":
     main()
