@@ -1,6 +1,4 @@
-from data_collection import artist
-from data_collection import track_names
-from sentiment_analysis import polarities
+from data_collection import main as data_collection_main
 import matplotlib.pyplot as plt
 import pandas as pd
 import seaborn as sns
@@ -51,5 +49,7 @@ def create_sentiment_graph(artist, track_names, polarities_dict):
                 fontsize=8, ha='left')
     
     plt.show()
-
-create_sentiment_graph(artist, track_names, polarities)
+if __name__ == "__main__":
+    ARTIST_NAME, track_names = data_collection_main()
+    from sentiment_analysis import polarities
+    create_sentiment_graph(ARTIST_NAME, track_names, polarities)
