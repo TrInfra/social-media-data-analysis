@@ -6,73 +6,107 @@ import json
 import re
 from dotenv import load_dotenv
 
-load_dotenv()
+SPOTIFY_API_BASE_URL = 'https://api.spotify.com/v1'
+SPOTIFY_TOKEN_URL = 'https://accounts.spotify.com/api/token'
+LYRICS_API_BASE_URL = 'https://api.lyrics.ovh/v1'
+ALBUM_ID = '1rpCHilZQkw84A3Y9czvMO'
+ARTIST_NAME = "Laufey"
 
-clientID = os.getenv('clientID')
-client_Secret = os.getenv('client_Secret')
+class SpotifyClient:
+    def __init__(self):
+        load_dotenv()
+        self.client_id = os.getenv('clientID')
+        self.client_secret = os.getenv('client_Secret')
+        self.token = self._get_access_token()
 
-# Authentication conversion to base 64
-string = f"{clientID}:{client_Secret}"
-string_byte = string.encode('ascii')
+    def _get_access_token(self):
+        auth_string = f"{self.client_id}:{self.client_secret}"
+        auth_bytes = base64.b64encode(auth_string.encode('ascii')).decode('ascii')
+        
+        headers = {
+            'Authorization': f'Basic {auth_bytes}',
+            'Content-Type': 'application/x-www-form-urlencoded'
+        }
+        
+        response = requests.post(
+            SPOTIFY_TOKEN_URL,
+            headers=headers,
+            data={'grant_type': 'client_credentials'}
+        )
+        
+        if response.status_code != 200:
+            raise Exception("Authentication failed with Spotify API")
+            
+        return response.json()['access_token']
 
-base64_bytes = base64.b64encode(string_byte)
-base64_string = base64_bytes.decode('ascii')
+    def get_album_tracks(self, album_id):
+        headers = {'Authorization': f'Bearer {self.token}'}
+        response = requests.get(
+            f'{SPOTIFY_API_BASE_URL}/albums/{album_id}',
+            headers=headers
+        )
+        
+        if response.status_code != 200:
+            raise Exception("Failed to get album information")
+            
+        return response.json()
 
-# Request access token
-url = 'https://accounts.spotify.com/api/token'
+class LyricsProcessor:
+    @staticmethod
+    def clean_lyrics(lyrics):
+        normalized = unicodedata.normalize('NFKD', lyrics)
+        cleaned = normalized.encode('ascii', 'ignore').decode('utf-8')
+        
+        cleaned = cleaned.replace(r'\r\n', '\n').replace(r'\n\n\n\n', '\n\n')
+        replacements = {
+            r'\bIm\b': "I'm",
+            r'\byoure\b': "you're",
+            r'\bwrot\b': "wrote",
+            r'\bhart\b': "heart",
+            r'\bWhats\b': "What's"
+        }
+        
+        for pattern, replacement in replacements.items():
+            cleaned = re.sub(pattern, replacement, cleaned)
+            
+        return cleaned
 
-headers = {
-    'Authorization': f'Basic {base64_string}',
-    'Content-Type': 'application/x-www-form-urlencoded'
-}
+    @staticmethod
+    def get_track_lyrics(artist, track_name):
+        url = f"{LYRICS_API_BASE_URL}/{artist}/{track_name}"
+        response = requests.get(url)
+        
+        if response.status_code != 200:
+            raise Exception(f"Status code: {response.status_code}")
+            
+        return response.json().get('lyrics', 'Lyrics not found.')
 
-payload = {'grant_type': 'client_credentials'}
+def ensure_directories():
+    os.makedirs('./Data/Raw', exist_ok=True)
+    os.makedirs('./Data/Processed', exist_ok=True)
 
-response = requests.post(url=url, headers=headers, data=payload)
-
-token = response.json()['access_token']
-
-id_album = '1rpCHilZQkw84A3Y9czvMO'
-
-# Request artist
-url = f'https://api.spotify.com/v1/albums/{id_album}'
-
-headers = {'Authorization': f'Bearer {token}'}
-
-response = requests.get(url=url, headers=headers)
-data = response.json()
-
-if response.status_code == 200:
-    with open('./Data/Raw/album.json', 'w', encoding='utf-8') as json_file:
-        json.dump(data, json_file, indent=4, ensure_ascii=False)
-
-track_names = [track['name'] for track in data['tracks']['items']]
-
-def clean_lyrics(lyrics):
-    normalized = unicodedata.normalize('NFKD', lyrics)
-    cleaned = normalized.encode('ascii', 'ignore').decode('utf-8')
+def main():
+    ensure_directories()
+    spotify_client = SpotifyClient()
+    lyrics_processor = LyricsProcessor()
     
-    cleaned = cleaned.replace(r'\r\n', '\n').replace(r'\n\n\n\n', '\n\n')
-    cleaned = re.sub(r'\bIm\b', "I'm", cleaned)
-    cleaned = re.sub(r'\byoure\b', "you're", cleaned)
-    cleaned = re.sub(r'\bwrot\b', "wrote", cleaned)
-    cleaned = re.sub(r'\bhart\b', "heart", cleaned)
-    cleaned = re.sub(r'\bWhats\b', "What's", cleaned)
-
-    return cleaned
-
-artist = "Laufey"
-for track_name in track_names:
-    url_lyrics = f"https://api.lyrics.ovh/v1/{artist}/{track_name}"
-    try:
-        response_lyrics = requests.get(url_lyrics)
-        if response_lyrics.status_code == 200:
-            lyrics_data = response_lyrics.json()
-            cleaned_lyrics = clean_lyrics(lyrics_data.get('lyrics', 'Lyrics not found.'))
-
+    album_data = spotify_client.get_album_tracks(ALBUM_ID)
+    
+    with open('./Data/Raw/album.json', 'w', encoding='utf-8') as json_file:
+        json.dump(album_data, json_file, indent=4, ensure_ascii=False)
+    
+    track_names = [track['name'] for track in album_data['tracks']['items']]
+    
+    for track_name in track_names:
+        try:
+            lyrics = lyrics_processor.get_track_lyrics(ARTIST_NAME, track_name)
+            cleaned_lyrics = lyrics_processor.clean_lyrics(lyrics)
+            
             with open(f'./Data/Processed/{track_name}.json', 'w', encoding='utf-8') as lyrics_file:
                 json.dump({"lyrics": cleaned_lyrics}, lyrics_file, indent=4, ensure_ascii=False)
-        else:
-            print(f"Failed to retrieve lyrics for {track_name}: {response_lyrics.status_code}")
-    except Exception as e:
-        print(f"Failed to retrieve lyrics for {track_name}: {e}")
+                
+        except Exception as e:
+            print(f"Failed to retrieve lyrics for {track_name}: {e}")
+
+if __name__ == "__main__":
+    main()
